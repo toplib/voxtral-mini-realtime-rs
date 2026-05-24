@@ -30,6 +30,9 @@ pub mod tts;
 #[cfg(feature = "wasm")]
 pub mod web;
 
+#[cfg(all(feature = "wgpu", not(target_family = "wasm")))]
+pub mod ffi;
+
 #[cfg(feature = "hub")]
 pub mod hub;
 
