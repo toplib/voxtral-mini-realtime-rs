@@ -1,9 +1,65 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::panic::AssertUnwindSafe;
+use std::sync::OnceLock;
 
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::tensor::Tensor;
+
+/// Lazily-initialized Vulkan device shared across all contexts.
+static VULKAN_DEVICE: OnceLock<WgpuDevice> = OnceLock::new();
+
+fn ensure_vulkan_device() -> WgpuDevice {
+    VULKAN_DEVICE
+        .get_or_init(|| {
+            use burn::backend::wgpu::{init_device, RuntimeOptions, WgpuSetup};
+
+            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::VULKAN,
+                ..Default::default()
+            });
+
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    force_fallback_adapter: false,
+                    compatible_surface: None,
+                },
+            ))
+            .expect("No Vulkan adapter found");
+
+            let info = adapter.get_info();
+            tracing::info!(
+                "Vulkan adapter: {} ({:?})",
+                info.name,
+                info.device_type
+            );
+
+            let adapter_limits = adapter.limits();
+            let features = adapter.features();
+            let (device, queue) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("voxtral-vulkan"),
+                    required_features: features,
+                    required_limits: adapter_limits,
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                },
+            ))
+            .expect("Failed to create Vulkan device");
+
+            let setup = WgpuSetup {
+                instance,
+                adapter,
+                device,
+                queue,
+                backend: wgpu::Backend::Vulkan,
+            };
+
+            init_device(setup, RuntimeOptions::default())
+        })
+        .clone()
+}
 
 use crate::audio::io::load_wav;
 use crate::audio::mel::{MelConfig, MelSpectrogram};
@@ -123,7 +179,7 @@ pub unsafe extern "C" fn voxtral_create() -> *mut VoxtralCtx {
             mel_extractor: MelSpectrogram::new(MelConfig::voxtral()),
             pad_config: PadConfig::voxtral(),
             time_embed: TimeEmbedding::new(3072),
-            device: WgpuDevice::default(),
+            device: ensure_vulkan_device(),
             last_error: None,
         }))
     }));
@@ -355,7 +411,7 @@ pub unsafe extern "C" fn voxtral_tts_create() -> *mut VoxtralTtsCtx {
             fm: None,
             codec: None,
             codebook: None,
-            device: WgpuDevice::default(),
+            device: ensure_vulkan_device(),
             voice_embed: None,
             tokenizer: None,
             last_error: None,

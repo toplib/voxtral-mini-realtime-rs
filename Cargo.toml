@@ -9,7 +9,7 @@ authors = ["Trevor Strieber"]
 
 [features]
 default = ["wgpu", "native-tokenizer"]
-wgpu = ["burn/wgpu"]
+wgpu = ["burn/wgpu", "dep:wgpu"]
 cli = ["clap", "indicatif"]
 hub = ["hf-hub"]
 # Tekken BPE encoding via tiktoken (WASM-compatible, no C deps)
